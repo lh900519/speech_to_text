@@ -15,7 +15,11 @@ dependencies:
   plugin_platform_interface: ^2.1.4
   # speech_to_text_platform_interface: ^2.0.1
   speech_to_text_platform_interface:
-    path: ../speech_to_text_platform_interface
+    # path: ../speech_to_text_platform_interface
+    git:
+      url: https://github.com/lh900519/speech_to_text.git
+      path: speech_to_text_platform_interface
+      ref: feat_aec
 
 dev_dependencies:
   flutter_test:
