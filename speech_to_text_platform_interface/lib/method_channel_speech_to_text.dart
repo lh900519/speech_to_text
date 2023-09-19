@@ -149,6 +149,46 @@ class MethodChannelSpeechToText extends SpeechToTextPlatform {
     }
   }
 
+  @override
+  Future<bool> listenPlusStartRecord({sampleRate = 0}) async {
+    Map<String, dynamic> listenParams = {
+      "sampleRate": sampleRate,
+    };
+
+    return await _channel.invokeMethod<bool>(
+            'listenPlusStartRecord', listenParams) ??
+        false;
+  }
+
+  @override
+  Future<bool> listenPlusStopRecord() async {
+    return await _channel.invokeMethod<bool>('listenPlusStopRecord') ?? false;
+  }
+
+  @override
+  Future<bool> listenPlusStartSpeech(
+      {String? localeId,
+      partialResults = true,
+      onDevice = false,
+      int listenMode = 0}) async {
+    Map<String, dynamic> listenParams = {
+      "partialResults": partialResults,
+      "onDevice": onDevice,
+      "listenMode": listenMode,
+    };
+    if (null != localeId) {
+      listenParams["localeId"] = localeId;
+    }
+    return await _channel.invokeMethod<bool>(
+            'listenPlusStartSpeech', listenParams) ??
+        false;
+  }
+
+  @override
+  Future<bool> listenPlusStopSpeech() async {
+    return await _channel.invokeMethod<bool>('listenPlusStopSpeech') ?? false;
+  }
+
   @visibleForTesting
   Future processMethodCall(MethodCall call) async {
     return await _handleCallbacks(call);

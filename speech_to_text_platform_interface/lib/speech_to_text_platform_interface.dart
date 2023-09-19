@@ -152,4 +152,28 @@ abstract class SpeechToTextPlatform extends PlatformInterface {
   Future<List<dynamic>> locales() {
     throw UnimplementedError('locales() has not been implemented.');
   }
+
+  Future<bool> listenPlusStartRecord({sampleRate = 0}) {
+    throw UnimplementedError(
+        'listenPlusStartRecord() has not been implemented.');
+  }
+
+  Future<bool> listenPlusStopRecord() {
+    throw UnimplementedError(
+        'listenPlusStopRecord() has not been implemented.');
+  }
+
+  Future<bool> listenPlusStartSpeech(
+      {String? localeId,
+      partialResults = true,
+      onDevice = false,
+      int listenMode = 0}) {
+    throw UnimplementedError(
+        'listenPlusStartSpeech() has not been implemented.');
+  }
+
+  Future<bool> listenPlusStopSpeech() {
+    throw UnimplementedError(
+        'listenPlusStopSpeech() has not been implemented.');
+  }
 }

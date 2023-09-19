@@ -462,6 +462,69 @@ class SpeechToText {
     }
   }
 
+  // ------------------------------------------------------------
+  // ------------------------------------------------------------
+  // ------------------------------------------------------------
+  // ------------------------------------------------------------
+  Future listenPlusStartRecord({sampleRate = 0}) async {
+    try {
+      var started = await SpeechToTextPlatform.instance
+          .listenPlusStartRecord(sampleRate: sampleRate);
+    } on PlatformException catch (e) {
+      throw ListenFailedException(e.message, e.details, e.stacktrace);
+    }
+  }
+
+  Future listenPlusStopRecord() async {
+    try {
+      var started = await SpeechToTextPlatform.instance.listenPlusStopRecord();
+    } on PlatformException catch (e) {
+      throw ListenFailedException(e.message, e.details, e.stacktrace);
+    }
+  }
+
+  Future listenPlusStartSpeech({
+    SpeechResultListener? onResult,
+    String? localeId,
+    onDevice = false,
+    ListenMode listenMode = ListenMode.confirmation,
+  }) async {
+    try {
+      _lastError = null;
+      _lastRecognized = '';
+      _userEnded = false;
+      _lastSpeechResult = null;
+      _recognized = false;
+      _notifiedFinal = false;
+      _notifiedDone = false;
+      _resultListener = onResult;
+      _partialResults = true;
+      _notifyFinalTimer?.cancel();
+      _notifyFinalTimer = null;
+
+      var started = await SpeechToTextPlatform.instance.listenPlusStartSpeech(
+          partialResults: true,
+          onDevice: onDevice,
+          listenMode: listenMode.index,
+          localeId: localeId);
+      return started;
+    } on PlatformException catch (e) {
+      throw ListenFailedException(e.message, e.details, e.stacktrace);
+    }
+  }
+
+  Future listenPlusStopSpeech() async {
+    try {
+      var started = await SpeechToTextPlatform.instance.listenPlusStopSpeech();
+    } on PlatformException catch (e) {
+      throw ListenFailedException(e.message, e.details, e.stacktrace);
+    }
+  }
+  // ------------------------------------------------------------
+  // ------------------------------------------------------------
+  // ------------------------------------------------------------
+  // ------------------------------------------------------------
+
   /// Call this while [listen] is active to change the pauseFor duration.
   /// This will restart the timer for the new duration. It is useful for
   /// allowing a long first pause then dynamically shortening it once
