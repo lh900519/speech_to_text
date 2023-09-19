@@ -310,6 +310,14 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
             try trap {
                 self.audioEngine.stop()
             }
+            
+            print("####################### STOP 1 \(String(describing: remoteIOUnit))")
+            if (remoteIOUnit != nil) {
+                print("####################### STOP 2 \(String(describing: remoteIOUnit))")
+                AudioOutputUnitStop(remoteIOUnit!);
+                AudioComponentInstanceDispose(remoteIOUnit!);
+                remoteIOUnit = nil
+            }
         }
         catch {
             os_log("Error stopping engine: %{PUBLIC}@", log: pluginLog, type: .error, error.localizedDescription)
@@ -376,6 +384,7 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
             }
             try self.audioSession.setMode(AVAudioSession.Mode.default)
             try self.audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            try self.audioSession.setPreferredIOBufferDuration(0.04)
             if let sound = listeningSound {
                 self.onPlayEnd = {()->Void in
                     if ( !self.failedListen ) {
@@ -386,10 +395,116 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
                 }
                 sound.play()
             }
-            self.audioEngine.reset();
-            if(inputNode?.inputFormat(forBus: 0).channelCount == 0){
-                throw SpeechToTextError.runtimeError("Not enough available inputs.")
+//            self.audioEngine.reset();
+            
+            // 1.1 创建AudioComponentDescription用来标识AudioUnit
+            // AudioUnit描述
+            var componentDesc = AudioComponentDescription();
+             
+            //AudioUnit的主类型
+            componentDesc.componentType = kAudioUnitType_Output;
+
+            //AudioUnit的子类型，支持回音消除
+            componentDesc.componentSubType = kAudioUnitSubType_VoiceProcessingIO;
+
+            //AudioUnit制造商，目前只支持苹果
+            componentDesc.componentManufacturer = kAudioUnitManufacturer_Apple;
+
+            //以下两个字段固定是0
+            componentDesc.componentFlags = 0;
+            componentDesc.componentFlagsMask = 0;
+            
+             
+            // 1.2 创建AudioComponent获取AudioUnit实例
+            //查找AudioComponent
+            //第一个参数传递NULL，告诉此函数使用系统定义的顺序查找匹配的第一个系统音频单元
+            guard let foundIoUnitReference = AudioComponentFindNext (nil, &componentDesc) else {
+                print("####################### 创建AudioComponent获取AudioUnit实例错误")
+                return
+            };
+
+            //实例化AudioUnit
+            var status = AudioComponentInstanceNew(foundIoUnitReference, &remoteIOUnit);
+            if (status != 0) {
+                print("####################### 实例化AudioUnit错误")
+                return
             }
+            
+            var disableFlag: UInt32 = 0
+            var enableFlag: UInt32 = 1;
+            
+            //开启麦克风
+            AudioUnitSetProperty(remoteIOUnit!,
+                                 kAudioOutputUnitProperty_EnableIO,
+                                 kAudioUnitScope_Input,
+                                 1,
+                                 &enableFlag,
+                                 UInt32(MemoryLayout<UInt32>.size))
+
+            // 设置AudioUnit基本参数
+            var mAudioFormat = AudioStreamBasicDescription()
+            mAudioFormat.mSampleRate = 16000;
+            mAudioFormat.mFormatID = kAudioFormatLinearPCM;
+            mAudioFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+            mAudioFormat.mReserved = 0;
+            mAudioFormat.mChannelsPerFrame = 1;
+            mAudioFormat.mBitsPerChannel = 16;
+            mAudioFormat.mFramesPerPacket = 1;
+            mAudioFormat.mBytesPerFrame = (mAudioFormat.mBitsPerChannel / 8) * mAudioFormat.mChannelsPerFrame; // 每帧的bytes数2
+            mAudioFormat.mBytesPerPacket =  mAudioFormat.mFramesPerPacket*mAudioFormat.mBytesPerFrame;//每个包的字节数2
+            
+            print("####################### mAudioFormat.mBytesPerFrame \(mAudioFormat.mBytesPerFrame)")
+            
+            let size: UInt32 = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            status = AudioUnitSetProperty(remoteIOUnit!,
+                                kAudioUnitProperty_StreamFormat,
+                                kAudioUnitScope_Output,
+                                1,
+                                &mAudioFormat,
+                                size)
+            if (status != 0) {
+                print("####################### kAudioUnitProperty_StreamFormat of bus 1 failed")
+                return
+            }
+            status = AudioUnitSetProperty(remoteIOUnit!,
+                                kAudioUnitProperty_StreamFormat,
+                                kAudioUnitScope_Input,
+                                0,
+                                &mAudioFormat,
+                                size)
+            if (status != 0) {
+                print("####################### kAudioUnitProperty_StreamFormat of bus 0 failed")
+                return
+            }
+            
+            
+            var callbackStruct = AURenderCallbackStruct(inputProc: callback, inputProcRefCon: Unmanaged.passUnretained(self).toOpaque())
+            status = AudioUnitSetProperty(remoteIOUnit!,
+                                kAudioOutputUnitProperty_SetInputCallback,
+                                kAudioUnitScope_Output,
+                                0,
+                                &callbackStruct,
+                                UInt32(MemoryLayout<AURenderCallbackStruct>.size))
+            if (status != 0) {
+                print("####################### 设置采集回调失败")
+                return
+            }
+            // 初始化AudioUnit
+            status = AudioUnitInitialize(remoteIOUnit!)
+            if (status != 0) {
+                print("####################### 初始化AudioUnit 失败")
+                return
+            }
+            // 启动AudioUnit
+            status = AudioOutputUnitStart(remoteIOUnit!)
+            if (status != 0) {
+                print("####################### 启动AudioUnit 失败 \(status)")
+                return
+            }
+            
+//            if(inputNode?.inputFormat(forBus: 0).channelCount == 0){
+//                throw SpeechToTextError.runtimeError("Not enough available inputs.")
+//            }
             self.currentRequest = SFSpeechAudioBufferRecognitionRequest()
             guard let currentRequest = self.currentRequest else {
                 sendBoolResult( false, result );
@@ -412,22 +527,19 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
             default:
                 break
             }
-            
             self.currentTask = self.recognizer?.recognitionTask(with: currentRequest, delegate: self )
-            let recordingFormat = inputNode?.outputFormat(forBus: self.busForNodeTap)
-            let theSampleRate = audioSession.sampleRate
-            let fmt = AVAudioFormat(commonFormat: recordingFormat!.commonFormat, sampleRate: theSampleRate, channels: recordingFormat!.channelCount, interleaved: recordingFormat!.isInterleaved)
-            try trap {
-                self.inputNode?.installTap(onBus: self.busForNodeTap, bufferSize: self.speechBufferSize, format: fmt) { (buffer: AVAudioPCMBuffer, when: AVAudioTime) in
-                    currentRequest.append(buffer)
-                    self.updateSoundLevel( buffer: buffer )
-                }
-            }
-        //    if ( inErrorTest ){
-        //        throw SpeechToTextError.runtimeError("for testing only")
-        //    }
-            self.audioEngine.prepare()
-            try self.audioEngine.start()
+//            let recordingFormat = inputNode?.outputFormat(forBus: self.busForNodeTap)
+//            let theSampleRate = audioSession.sampleRate
+//            let fmt = AVAudioFormat(commonFormat: recordingFormat!.commonFormat, sampleRate: theSampleRate, channels: recordingFormat!.channelCount, interleaved: recordingFormat!.isInterleaved)
+//            try trap {
+//                self.inputNode?.installTap(onBus: self.busForNodeTap, bufferSize: self.speechBufferSize, format: fmt) { (buffer: AVAudioPCMBuffer, when: AVAudioTime) in
+//                    print("mmmmmmmmmmmmm")
+//                    currentRequest.append(buffer)
+//                    self.updateSoundLevel( buffer: buffer )
+//                }
+//            }
+//            self.audioEngine.prepare()
+//            try self.audioEngine.start()
             if nil == listeningSound {
                 listening = true
                 self.invokeFlutter( SwiftSpeechToTextCallbackMethods.notifyStatus, arguments: SpeechToTextStatus.listening.rawValue )
@@ -451,6 +563,135 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
             }
         }
     }
+    
+   //需要实例化的AudioUnit
+    var remoteIOUnit: AudioUnit? = nil;
+    let callback: AURenderCallback = {
+        (inRefCon: UnsafeMutableRawPointer,
+         ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
+         inTimeStamp:  UnsafePointer<AudioTimeStamp>,
+         inBusNumber: UInt32,
+         inNumberFrames: UInt32,
+         ioData: UnsafeMutablePointer<AudioBufferList>?) -> OSStatus in
+        
+        let sstp = unsafeBitCast(inRefCon, to: SwiftSpeechToTextPlugin.self)
+        
+        var buffer = AudioBuffer(
+            mNumberChannels: 1, //声道数
+            mDataByteSize: inNumberFrames * 2,
+            mData: nil
+        )
+        var buffers = AudioBufferList(
+            mNumberBuffers: 1,      //只需要一个音频缓冲
+            mBuffers: buffer
+        )
+        print("####################### inNumberFrames \(inNumberFrames) buffers \(buffers)")
+        
+        // 从输入 AUHAL 中检索捕获的样本
+        let status = AudioUnitRender(
+                            sstp.remoteIOUnit!,
+                            ioActionFlags,
+                            inTimeStamp,
+                            inBusNumber,
+                            inNumberFrames,
+                            &buffers)
+        guard status == noErr else {
+            print("####################### AudioUnitRender error \(status)")
+            return status
+        }
+        
+        var echoCancellation: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+//        AudioUnitGetProperty(sstp.remoteIOUnit!,
+//                            kAUVoiceIOProperty_BypassVoiceProcessing,
+//                            kAudioUnitScope_Global,
+//                            0,
+//                            &echoCancellation,
+//                            &size)
+        AudioUnitGetProperty(sstp.remoteIOUnit!,
+                             kMultiChannelMixerParam_Volume,
+                             kAudioUnitScope_Input,
+                            0,
+                            &echoCancellation,
+                            &size)
+        
+        print("####################### echoCancellation \(echoCancellation)")
+        print("####################### buffers \(buffers)")
+        print("####################### buffer \(buffers.mBuffers.mData)")
+        
+
+        // sstp.writePCMData(buffer: buffers.mBuffers.mData, size: buffer.mDataByteSize)
+
+//        let recordingFormat = sstp.inputNode?.outputFormat(forBus: sstp.busForNodeTap)
+//        print("####################### recordingFormat commonFormat \(recordingFormat!.commonFormat)")
+//        print("####################### recordingFormat interleaved \(recordingFormat!.isInterleaved)")
+        
+//        let fmt = AVAudioFormat(
+//            commonFormat: recordingFormat!.commonFormat,
+//            sampleRate: 16000,
+//            channels: 1,
+//            interleaved: recordingFormat!.isInterleaved
+//        )
+        
+        
+       
+        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)
+//        let audioBuffer = AVAudioPCMBuffer(pcmFormat: format!, frameCapacity: AVAudioFrameCount(buffer.mDataByteSize / 2))!
+//        audioBuffer.frameLength = audioBuffer.frameCapacity
+//        // Get the underlying memory for the PCM buffer and copy data into it
+////        guard let destSamples = audioBuffer.int16ChannelData else {
+////            return errno
+////        }
+////        let destPtr = UnsafeMutableBufferPointer(start: destSamples.pointee, count: Int(audioBuffer.frameCapacity))
+////        destPtr.withMemoryRebound(to: UInt8.self) { destBytes -> Void in
+////            // Now we have the destination as a byte buffer and can copy from the data buffer
+////            let data = UnsafeMutablePointer<Float>(buffers.mBuffers.mData)
+//////            _ = buffers.mBuffers.mData.copyBytes(to: destBytes)
+////        }
+//
+//        let ptr = buffers.mBuffers.mData?.assumingMemoryBound(to: Float.self)
+//
+//        audioBuffer.floatChannelData?.pointee.initialize(from: ptr!, count: Int(buffers.mBuffers.mDataByteSize) / 2)
+////            let audioBufferPointer = audioBuffer.int16ChannelData![0]
+//////            data.withUnsafeBytes { bufferPointer in
+//////                audioBufferPointer.initialize(from: bufferPointer, count: data.count / 2)
+//////            }
+////            audioBufferPointer.initialize(from: buffer.array(), count: data.count / 2)
+//        print("####################### audioBuffer \(ptr) \(audioBuffer)")
+//        sstp.currentRequest?.append(audioBuffer)
+//
+        
+//
+//        let stdinFileDescriptor = FileHandle.standardInput.fileDescriptor
+//        let ioChannel = DispatchIO(type: .stream, fileDescriptor: stdinFileDescriptor, queue: DispatchQueue.main) { (error) in
+//            if error != 0 {
+//                print("Error reading audio from standard input: \(error)")
+//            }
+//        }
+//        ioChannel.setLimit(lowWater: 1)
+//        ioChannel.setInterval(interval: .milliseconds(100))
+//        ioChannel.read(offset: 0, length: Int.max, queue: DispatchQueue.main) { (done, data, error) in
+//        }
+//        ioChannel.resume()
+        
+//        data.withUnsafeBytes { bufferPointer in
+//            audioBufferPointer.initialize(from: bufferPointer, count: data.count / 2)
+//        }
+        if #available(iOS 15.0, *) {
+            guard let pcmBuffer = AVAudioPCMBuffer(
+                pcmFormat: format!,
+                bufferListNoCopy: &buffers
+            ) else {
+                print("####################### pcmBuffer error")
+                return errno
+            }
+            print("####################### pcmBuffer \(pcmBuffer.format)")
+            sstp.currentRequest!.append(pcmBuffer)
+        }
+        
+        return errno
+    }
+    
     
     private func updateSoundLevel( buffer: AVAudioPCMBuffer) {
         guard
@@ -537,7 +778,7 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
     }
     
     private func invokeFlutter( _ method: SwiftSpeechToTextCallbackMethods, arguments: Any? ) {
-        os_log("invokeFlutter %{PUBLIC}@", log: pluginLog, type: .debug, method.rawValue )
+        // os_log("invokeFlutter %{PUBLIC}@", log: pluginLog, type: .debug, method.rawValue )
         DispatchQueue.main.async {
             self.channel.invokeMethod( method.rawValue, arguments: arguments )
         }
@@ -629,5 +870,20 @@ extension SwiftSpeechToTextPlugin : AVAudioPlayerDelegate {
         if let playEnd = self.onPlayEnd {
             playEnd()
         }
+    }
+}
+
+extension AudioBuffer {
+    func array() -> [Float] {
+        return Array(UnsafeBufferPointer(self))
+    }
+}
+
+extension URL {
+
+    static var documents: URL {
+        return FileManager
+            .default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 }
