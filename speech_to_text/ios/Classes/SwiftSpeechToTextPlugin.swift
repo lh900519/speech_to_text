@@ -674,7 +674,7 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
             
             print("####################### 实例化AudioUnit 1 \(String(describing: remoteIOUnit))")
             
-            
+            // initWriteFile()
 
             listeningPlus = true
             self.invokeFlutter( SwiftSpeechToTextCallbackMethods.notifyStatus, arguments: SpeechToTextStatus.listening.rawValue )
@@ -744,7 +744,7 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
                 sendBoolResult( false, result );
                 print("listenPlusStartSpeech currentTask init error")
                 return
-            }
+            }            
             currentRequest.shouldReportPartialResults = true
             if #available(iOS 13.0, *), onDevice {
                 currentRequest.requiresOnDeviceRecognition = true
@@ -763,24 +763,17 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
                 break
             }
             
-//            var callbackStruct = AURenderCallbackStruct(
-//                    inputProc: callback,
-//                    inputProcRefCon: Unmanaged.passUnretained(self).toOpaque())
-//
-//            var status = AudioUnitSetProperty(remoteIOUnit!,
-//                                kAudioOutputUnitProperty_SetInputCallback,
-//                                kAudioUnitScope_Output,
-//                                0,
-//                                &callbackStruct,
-//                                UInt32(MemoryLayout<AURenderCallbackStruct>.size))
-//            if (status != 0) {
-//                print("####################### 设置采集回调失败 2")
-//                return
-//            }
-//            print("####################### 更新AudioUnit 回调 \(remoteIOUnit)")
-            
-            
             self.currentTask = self.recognizer?.recognitionTask(with: currentRequest, delegate: self )
+//            self.currentTask = self.recognizer?.recognitionTask(with: currentRequest, resultHandler: { result, error in
+//                guard let recognitionResult = result else {
+//                    return
+//                }
+//                let isFinal = recognitionResult.isFinal
+//                let bestString = recognitionResult.bestTranscription.formattedString
+//                self.handleResult( recognitionResult.transcriptions, isFinal: isFinal )
+//                print("===================== 识别过程：\(bestString), final \(isFinal) error: \(error)")
+//            })
+            
             self.invokeFlutter( SwiftSpeechToTextCallbackMethods.notifyStatus, arguments: SpeechToTextStatus.listening.rawValue )
             
             print("listenPlusStartSpeech currentTask init complete \(recognizer)")
@@ -822,8 +815,37 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
         return status
     }
     
+//    func initWriteFile() {
+//
+//        let paths = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true) as [String]
+//        let documentsDirectory = paths[0] as NSString
+//        let audioFilename = documentsDirectory.appendingPathComponent("whistle.wav")
+//        let audioURL = URL(fileURLWithPath: audioFilename)
+//
+//        let settings =
+//            [AVFormatIDKey: NSNumber(value: Int32(kAudioFormatLinearPCM) as Int32),
+//             AVSampleRateKey: 16000,
+//             AVNumberOfChannelsKey: 1,
+//             AVLinearPCMBitDepthKey : 16,
+//             AVLinearPCMIsBigEndianKey : false,
+//             AVLinearPCMIsFloatKey : true,
+//             AVLinearPCMIsNonInterleaved : false] as [String : Any];
+//
+//        do{
+//            outputFile = try AVAudioFile(
+//                forWriting: audioURL,
+//                settings: settings,
+//                commonFormat: AVAudioCommonFormat.pcmFormatInt16,
+//                interleaved: false
+//            )
+//        }catch{
+//            print("error")
+//        }
+//    }
+    
    //需要实例化的AudioUnit
-    var remoteIOUnit: AudioUnit? = nil;
+    var remoteIOUnit: AudioUnit? = nil
+    var outputFile: AVAudioFile? = nil
     let callback: AURenderCallback = {
         (inRefCon: UnsafeMutableRawPointer,
          ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
@@ -834,14 +856,13 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
         
         let sstp = unsafeBitCast(inRefCon, to: SwiftSpeechToTextPlugin.self)
         
-        var buffer = AudioBuffer(
-            mNumberChannels: 1, //声道数
-            mDataByteSize: inNumberFrames * 2,
-            mData: nil
-        )
         var buffers = AudioBufferList(
             mNumberBuffers: 1,      //只需要一个音频缓冲
-            mBuffers: buffer
+            mBuffers: AudioBuffer(
+                mNumberChannels: 1, //声道数
+                mDataByteSize: inNumberFrames * 2,
+                mData: nil
+            )
         )
         
         // 从输入 AUHAL 中检索捕获的样本
@@ -858,23 +879,36 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
         }
         
         
-        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)
-        let audioBuffer = AVAudioPCMBuffer(pcmFormat: format!, frameCapacity: AVAudioFrameCount(buffer.mDataByteSize / 2))!
+        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)
+        let audioBuffer = AVAudioPCMBuffer(pcmFormat: format!, frameCapacity: AVAudioFrameCount(buffers.mBuffers.mDataByteSize / 2))!
         audioBuffer.frameLength = audioBuffer.frameCapacity
         
         guard let bufferData = buffers.mBuffers.mData else {
             print("####################### bufferData error")
             return status
         }
-        let audioBufferPointer = audioBuffer.int16ChannelData![0]
-
-        let data = Data(bytesNoCopy: bufferData, count: Int(buffers.mBuffers.mDataByteSize), deallocator: .none)
-        data.withUnsafeBytes { bufferPointer in
-            audioBufferPointer.initialize(from: bufferPointer, count: data.count / 2)
-        }
         
+        memcpy(audioBuffer.int16ChannelData?[0], bufferData, Int(buffers.mBuffers.mDataByteSize))
+        // audioBuffer.int16ChannelData![0].update(repeating: 0, count: Int(buffers.mBuffers.mDataByteSize))
+//        let audioBufferPointer = audioBuffer.int16ChannelData![0]
+//        let data = Data(bytesNoCopy: buffers.mBuffers.mData!, count: Int(buffers.mBuffers.mDataByteSize), deallocator: .none)
+//        data.withUnsafeBytes { bufferPointer in
+//            audioBufferPointer.initialize(from: bufferPointer, count: data.count / 2)
+//        }
+        
+        guard let audioformat = sstp.currentRequest?.nativeAudioFormat else {
+            return status
+        }
+//        print("####################### \(audioformat.isInterleaved)")
+//        print("####################### \(audioformat.sampleRate)")
+//        print("####################### \(audioformat.settings)")
         sstp.currentRequest?.append(audioBuffer)
-
+        
+//        do {
+//            try sstp.outputFile?.write(from: audioBuffer)
+//        } catch {
+//            print("####################### write file error")
+//        }
         return errno
     }
     
