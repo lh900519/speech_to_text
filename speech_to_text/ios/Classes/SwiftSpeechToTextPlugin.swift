@@ -514,9 +514,10 @@ public class SwiftSpeechToTextPlugin: NSObject, FlutterPlugin {
         }
         
         do {
-            if let rememberedAudioCategory = rememberedAudioCategory, let rememberedAudioCategoryOptions = rememberedAudioCategoryOptions {
-                try self.audioSession.setCategory(rememberedAudioCategory,options: rememberedAudioCategoryOptions)
-            }
+//            if let rememberedAudioCategory = rememberedAudioCategory, let rememberedAudioCategoryOptions = rememberedAudioCategoryOptions {
+//                try self.audioSession.setCategory(rememberedAudioCategory,options: rememberedAudioCategoryOptions)
+//            }
+            try self.audioSession.setCategory(.playback,options: [.allowBluetooth,.allowBluetoothA2DP,.mixWithOthers])
         }
         catch {
             os_log("Error stopping listen: %{PUBLIC}@", log: pluginLog, type: .error, error.localizedDescription)
